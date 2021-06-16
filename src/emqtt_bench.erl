@@ -212,9 +212,18 @@ main(sub, Opts) ->
 
 main(pub, Opts) ->
     Size    = proplists:get_value(size, Opts),
-    Payload = iolist_to_binary([O || O <- lists:duplicate(Size, $a)]),
+    Payload = generate_payload(Size),
     MsgLimit = consumer_pub_msg_fun_init(proplists:get_value(limit, Opts)),
     start(pub, [{payload, Payload}, {limit_fun, MsgLimit} | Opts]);
+
+generate_payload(Size) ->
+    Seq = lists:flatten(io_lib:format("~p",[rand:uniform()])), % 0.2549911058110351
+    MsgId = string:substr(Seq,3),
+    Content = [O || O <- lists:duplicate(Size, $k)],
+    Json = string:join(["{\"msg_id\":\"", MsgId, "\",\"msg_content\":\"", Content, "\"}"],""),
+    PayLoad = iolist_to_binary(Json),
+    %io:format("~s~n",[PayLoad]), % output to verify.
+    PayLoad.
 
 main(conn, Opts) ->
     start(conn, Opts).
