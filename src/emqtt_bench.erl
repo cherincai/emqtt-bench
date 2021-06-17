@@ -216,17 +216,17 @@ main(pub, Opts) ->
     MsgLimit = consumer_pub_msg_fun_init(proplists:get_value(limit, Opts)),
     start(pub, [{payload, Payload}, {limit_fun, MsgLimit} | Opts]);
 
+main(conn, Opts) ->
+    start(conn, Opts).
+
 generate_payload(Size) ->
     Seq = lists:flatten(io_lib:format("~p",[rand:uniform()])), % 0.2549911058110351
     MsgId = string:substr(Seq,3),
     Content = [O || O <- lists:duplicate(Size, $k)],
     Json = string:join(["{\"msg_id\":\"", MsgId, "\",\"msg_content\":\"", Content, "\"}"],""),
-    PayLoad = iolist_to_binary(Json),
+    Payload = iolist_to_binary(Json),
     %io:format("~s~n",[PayLoad]), % output to verify.
-    PayLoad.
-
-main(conn, Opts) ->
-    start(conn, Opts).
+    Payload.
 
 start(PubSub, Opts) ->
     prepare(), init(),
@@ -406,7 +406,7 @@ connect(Parent, N, PubSub, Opts) ->
                    Interval = proplists:get_value(interval_of_msg, Opts),
                    timer:send_interval(Interval, publish)
             end,
-            loop(Parent, N, Client, PubSub, loop_opts(AllOpts));
+            loop(Parent, N, Client, PubSub, loop_opts(AllOpts)); % filter: seq,client_id
         {error, Error} ->
             io:format("client(~w): connect error - ~p~n", [N, Error])
     end.
@@ -576,9 +576,16 @@ topics_opt([_Opt|Topics], Acc) ->
 
 topic_opt(Opts) ->
     feed_var(bin(proplists:get_value(topic, Opts)), Opts).
+    %K = proplists:get_value(topic, Opts),
+    %io:format("~s~n",[K]),
+    %K1 = bin(K),
+    %io:format("~s~n",[K1]),
+    %K2 = feed_var(K1, Opts),
+    %io:format("~s~n",[K2]),
+    %K2.
 
 feed_var(Topic, Opts) when is_binary(Topic) ->
-    Props = [{Var, bin(proplists:get_value(Key, Opts))} || {Key, Var} <-
+    Props = [{Var, bin(proplists:get_value(Key, Opts))} || {Key, Var} <-  % todo get_value(seq, Opts) =:= undefined
                 [{seq, <<"%i">>}, {client_id, <<"%c">>}, {username, <<"%u">>}]],
     lists:foldl(fun({_Var, undefined}, Acc) -> Acc;
                    ({Var, Val}, Acc) -> feed_var(Var, Val, Acc)
@@ -628,5 +635,5 @@ replace_opts(Opts, NewOpts) ->
 %% trim opts to save proc stack mem.
 loop_opts(Opts) ->
     lists:filter(fun({K,__V}) ->
-                         lists:member(K, [payload, qos, retain, topic, lowmem, limit_fun])
+                         lists:member(K, [payload, qos, retain, topic, lowmem, limit_fun, seq, client_id]) %% add: seq,client_id
                  end, Opts).
