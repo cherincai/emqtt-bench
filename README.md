@@ -4,6 +4,8 @@
 
 Requires Erlang/OTP 22.3+ to build.
 
+support connection auto reconnect feature.
+
 ## Build first
 
 ```sh
@@ -20,6 +22,7 @@ Usage: emqtt_bench conn [--help <help>] [-h [<host>]] [-p [<port>]]
                         [-k [<keepalive>]] [-C [<clean>]] [-S [<ssl>]]
                         [--certfile <certfile>] [--keyfile <keyfile>]
                         [--ifaddr <ifaddr>] [--prefix <prefix>]
+                        [--ar <interva>]
 
   --help             help information
   -h, --host         mqtt server hostname or IP address [default:
@@ -41,6 +44,7 @@ Usage: emqtt_bench conn [--help <help>] [-h [<host>]] [-p [<port>]]
   --ifaddr           One or multiple (comma-separated) source IP addresses
   --prefix           client id prefix
   -l, --lowmem       low mem mode, but use more CPU 
+  --ar               interval for client to disconnect and then reconnect
 ```
 
 For example, create 50K concurrent connections at the arrival rate of 100/sec:
@@ -103,6 +107,7 @@ Usage: emqtt_bench pub [--help <help>] [-h [<host>]] [-p [<port>]]
                        [-C [<clean>]] [-S [<ssl>]]
                        [--certfile <certfile>] [--keyfile <keyfile>]
                        [--ws [<ws>]] [--ifaddr <ifaddr>] [--prefix <prefix>]
+                       [--ar <N time of interval_of_msg>]
 
   --help                 help information
   -h, --host             mqtt server hostname or IP address [default: localhost]
@@ -127,13 +132,20 @@ Usage: emqtt_bench pub [--help <help>] [-h [<host>]] [-p [<port>]]
   --ws                   websocket transport [default: false]
   --ifaddr               One or multiple (comma-separated) source IP addresses
   --prefix               client id prefix
-  -l, --lowmem       low mem mode, but use more CPU 
+  -l, --lowmem           low mem mode, but use more CPU 
+  --ar                   x numbers,client to disconnect and automatic re-connect interval, base on x times of interval_of_msg, 0 - disable.
 ```
 
 For example, create 100 connections and each publishes messages at the rate of 100 msg/sec.
 
 ```sh
 ./emqtt_bench pub -c 100 -I 10 -t bench/%i -s 256
+```
+
+For example, 10 times of interval_of_msg 'interval' to disconnect and then reconnect
+
+```sh
+./emqtt_bench pub -c 100 -I 1000 -t bench/%i -s 256 --ar 10
 ```
 
 ## Local interface
@@ -173,4 +185,5 @@ sudo sysctl -w net.ipv4.ip_local_port_range="1025 65534"
 ## Author
 
 EMQ X Team.
+Charley Choi<gl.cherin.cai@gmail.com>
 
