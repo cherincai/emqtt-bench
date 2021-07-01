@@ -1,3 +1,5 @@
+%% coding: latin-1
+
 %%--------------------------------------------------------------------
 %% Copyright (c) 2019 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
@@ -21,7 +23,7 @@
         , start/2
         , run/3
         , connect/4
-        , loop/5
+        , loop/6
         ]).
 
 -define(PUB_OPTS,
@@ -69,7 +71,8 @@
          {ifaddr, undefined, "ifaddr", string,
           "One or multiple (comma-separated) source IP addresses"},
          {prefix, undefined, "prefix", string, "client id prefix"},
-         {lowmem, $l, "lowmem", boolean, "enable low mem mode, but use more CPU"}
+         {lowmem, $l, "lowmem", boolean, "enable low mem mode, but use more CPU"},
+         {ar, undefined, "ar", {integer, 0}, "disconnect and automatic re-connect interval, base on multiple times of interval_of_msg, 0 - disable."}
         ]).
 
 -define(SUB_OPTS,
@@ -143,7 +146,8 @@
          {ifaddr, undefined, "ifaddr", string,
           "local ipaddress or interface address"},
          {prefix, undefined, "prefix", string, "client id prefix"},
-         {lowmem, $l, "lowmem", boolean, "enable low mem mode, but use more CPU"}
+         {lowmem, $l, "lowmem", boolean, "enable low mem mode, but use more CPU"},
+         {ar, undefined, "ar", {integer, 0}, "disconnect and automatic re-connect interval, base on millionsecond, 0 - disable."}
         ]).
 
 -define(TAB, ?MODULE).
@@ -221,7 +225,7 @@ main(conn, Opts) ->
 
 generate_payload(Size) ->
     Seq = lists:flatten(io_lib:format("~p",[rand:uniform()])), % 0.2549911058110351
-    MsgId = string:substr(Seq,3),
+    MsgId = string:substr(Seq, 3),
     Content = [O || O <- lists:duplicate(Size, $k)],
     Json = string:join(["{\"msg_id\":\"", MsgId, "\",\"msg_content\":\"", Content, "\"}"],""),
     Payload = iolist_to_binary(Json),
@@ -256,9 +260,9 @@ start(PubSub, Opts) ->
                                                       {interval_of_msg, MsgInterval},
                                                       {interval, Interval}
                                                      ] ++ CountParm),
-                          spawn(?MODULE, run, [self(), PubSub, WOpts])
+                          spawn(?MODULE, run, [self(), PubSub, WOpts])  %% WorkerOptions 每个IP段，单独启动：主流程。传递主进程标识，后续子进程需要交换消息给父进程。
                   end, lists:seq(1, NoWorkers)),
-    timer:send_interval(1000, stats),
+    timer:send_interval(1000, stats),   %% 监听状态，给自己进程发送消息“stats"
     main_loop(os:timestamp(), 1+proplists:get_value(startnumber, Opts)).
 
 prepare() ->
@@ -275,7 +279,7 @@ init() ->
     put({stats, sub_fail}, 0),
     put({stats, sub}, 0).
 
-
+%% 等待服务器端返回，打印响应内容：实际消息从子进程传递回来。
 main_loop(Uptime, Count) ->
     receive
         publish_complete ->
@@ -371,7 +375,7 @@ run(Parent, N, PubSub, Opts) ->
                     false ->
                         []
                 end,
-    spawn_opt(?MODULE, connect, [Parent, N+proplists:get_value(startnumber, Opts), PubSub, Opts],
+    spawn_opt(?MODULE, connect, [Parent, N+proplists:get_value(startnumber, Opts), PubSub, Opts],   %% 启动每个连接进程：主流程。传递父（主）进程标识。
              SpawnOpts),
 	timer:sleep(proplists:get_value(interval, Opts)),
 	run(Parent, N-1, PubSub, Opts).
@@ -389,7 +393,7 @@ connect(Parent, N, PubSub, Opts) ->
                   _ -> MqttOpts
                 end,
     AllOpts  = [{seq, N}, {client_id, ClientId} | Opts],
-	{ok, Client} = emqtt:start_link(MqttOpts1),
+	{ok, Client} = emqtt:start_link(MqttOpts1),    %% 协议、端口等资源创建？
     ConnRet = case proplists:get_bool(ws, Opts) of
                   true  -> 
                       emqtt:ws_connect(Client);
@@ -397,21 +401,41 @@ connect(Parent, N, PubSub, Opts) ->
               end,
     case ConnRet of
         {ok, _Props} ->
-            Parent ! {connected, N, Client},
+            Parent ! {connected, N, Client},    %% 给主父进程报告连接消息
             case PubSub of
-                conn -> ok;
+                conn -> 
+                    ReconnInterval = proplists:get_value(ar, Opts),
+                    case ReconnInterval of
+                        0 -> ok;
+                        _ -> timer:send_interval(ReconnInterval, reconnect)      %% 间隔搞断开重连
+                    end;
                 sub ->
                     subscribe(Client, AllOpts);
                 pub ->
-                   Interval = proplists:get_value(interval_of_msg, Opts),
-                   timer:send_interval(Interval, publish)
+                    ReconnFlag = proplists:get_value(reconn_flag, Opts),
+                    case ReconnFlag of
+                        true -> skip;
+                        _ ->
+                            %% 只在首次连接后注册定时器，不需要重复注册    
+                            Interval = proplists:get_value(interval_of_msg, Opts),
+                            timer:send_interval(Interval, publish),                %% 间隔搞事情-发布消息。Same as send_interval(Time, self(), Message) 
+                            ReconnIntervalUnit = proplists:get_value(ar, Opts),
+                            case ReconnIntervalUnit of
+                                0 -> skip;
+                                _ -> timer:send_interval(Interval * ReconnIntervalUnit + 2000, reconnect)      %% 间隔搞断开重连
+                            end
+                    end
             end,
-            loop(Parent, N, Client, PubSub, loop_opts(AllOpts)); % filter: seq,client_id
+            loop(Parent, N, Client, PubSub, loop_opts(AllOpts), Opts);    %% fixme => filter: seq,client_id。每个进程内的死循环：发布或订阅消息
         {error, Error} ->
-            io:format("client(~w): connect error - ~p~n", [N, Error])
+            io:format("client(~w): connect error - ~p~n", [N, Error]),   
+            case proplists:get_value(reconn_flag, Opts) of
+                true -> reconnect(Parent, N, Client, PubSub, Opts, true); %% 发现属于掉线自动重连场景，则再次重连。
+                _ -> skip
+            end
     end.
 
-loop(Parent, N, Client, PubSub, Opts) ->
+loop(Parent, N, Client, PubSub, Opts, ReconnOpts) ->
     receive
         publish ->
            case (proplists:get_value(limit_fun, Opts))() of
@@ -423,19 +447,23 @@ loop(Parent, N, Client, PubSub, Opts) ->
                         {error, Reason} ->
                             io:format("client(~w): publish error - ~p~n", [N, Reason])
                     end,
-                    loop(Parent, N, Client, PubSub, Opts);
+                    loop(Parent, N, Client, PubSub, Opts, ReconnOpts);
                 _ ->
                     Parent ! publish_complete,
                     exit(normal)
             end;
         {publish, _Publish} ->
             inc_counter(recv),
-            loop(Parent, N, Client, PubSub, Opts);
+            loop(Parent, N, Client, PubSub, Opts, ReconnOpts);
         {'EXIT', Client, normal} ->
             ok;
         {'EXIT', Client, Reason} ->
-            io:format("client(~w): EXIT for ~p~n", [N, Reason])
-    after
+            io:format("client(~w): EXIT for ~p~n", [N, Reason]),
+            reconnect(Parent, N, Client, PubSub, ReconnOpts, true); %% 问题，若重连时，服务器未启动，连接不上，如何重试？=> 连接进程里面重试
+        reconnect ->
+            reconnect(Parent, N, Client, PubSub, ReconnOpts, false)
+            
+    after   %% receive 超时了走after语句。此处：500ms没有收到消息，则进入垃圾回收/休眠进程。
         500 ->
             case proplists:get_bool(lowmem, Opts) of
                 true ->
@@ -444,8 +472,24 @@ loop(Parent, N, Client, PubSub, Opts) ->
                 false ->
                     skip
             end,
-            proc_lib:hibernate(?MODULE, loop, [Parent, N, Client, PubSub, Opts])
+            proc_lib:hibernate(?MODULE, loop, [Parent, N, Client, PubSub, Opts, ReconnOpts])
 	end.
+
+%% 断开重连
+reconnect(Parent, N, Client, PubSub, ReconnOpts, ServerTCPClosed) ->
+    case ServerTCPClosed of
+        false -> emqtt:disconnect(Client); %% 主动断开，释放端口。
+        true -> skip     %% 服务器已断开（在网络底层，客户端也被动断开了），则无需客户端再次操作断开（否则进程crash）。
+    end,
+    timer:sleep(1000),
+    io:format("client(~w): automatic re-connecting...~n", [N]),
+    ReconnFlag = proplists:get_value(reconn_flag, ReconnOpts),
+    case ReconnFlag of
+        true ->
+            connect(Parent, N, PubSub, ReconnOpts);
+        _ ->
+            connect(Parent, N, PubSub, [{reconn_flag, true} | ReconnOpts])
+    end.
 
 consumer_pub_msg_fun_init(0) ->
     fun() -> true end;
@@ -476,7 +520,7 @@ publish(Client, Opts) ->
     Flags   = [{qos, proplists:get_value(qos, Opts)},
                {retain, proplists:get_value(retain, Opts)}],
     Payload = proplists:get_value(payload, Opts),
-    Res = emqtt:publish(Client, topic_opt(Opts), Payload, Flags),
+    Res = emqtt:publish(Client, topic_opt(Opts), Payload, Flags),   %% 真正发布主题消息到服务器
     case Res of
         ok ->
             inc_counter(pub);
@@ -635,5 +679,5 @@ replace_opts(Opts, NewOpts) ->
 %% trim opts to save proc stack mem.
 loop_opts(Opts) ->
     lists:filter(fun({K,__V}) ->
-                         lists:member(K, [payload, qos, retain, topic, lowmem, limit_fun, seq, client_id]) %% add: seq,client_id
+                         lists:member(K, [payload, qos, retain, topic, lowmem, limit_fun, seq, client_id, username]) %% add: seq,client_id,username
                  end, Opts).
