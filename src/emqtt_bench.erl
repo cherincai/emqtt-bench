@@ -381,7 +381,7 @@ run(Parent, N, PubSub, Opts) ->
 	run(Parent, N-1, PubSub, Opts).
 
 connect(Parent, N, PubSub, Opts) ->
-    process_flag(trap_exit, true),
+    process_flag(trap_exit, true),  %% 设置为系统进程
     rand:seed(exsplus, erlang:timestamp()),
     ClientId = client_id(PubSub, N, Opts),
     MqttOpts = [{clientid, ClientId},
@@ -393,7 +393,7 @@ connect(Parent, N, PubSub, Opts) ->
                   _ -> MqttOpts
                 end,
     AllOpts  = [{seq, N}, {client_id, ClientId} | Opts],
-	{ok, Client} = emqtt:start_link(MqttOpts1),    %% 协议、端口等资源创建？
+	{ok, Client} = emqtt:start_link(MqttOpts1),    %% 协议、端口等资源创建: emqtt 进程连接
     ConnRet = case proplists:get_bool(ws, Opts) of
                   true  -> 
                       emqtt:ws_connect(Client);
