@@ -185,5 +185,6 @@ sudo sysctl -w net.ipv4.ip_local_port_range="1025 65534"
 ## Author
 
 EMQ X Team.
-Charley Choi<gl.cherin.cai@gmail.com>
+
+Charley Choi <gl.cherin.cai@gmail.com>
 
