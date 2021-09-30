@@ -44,7 +44,8 @@ Usage: emqtt_bench conn [--help <help>] [-h [<host>]] [-p [<port>]]
   --ifaddr           One or multiple (comma-separated) source IP addresses
   --prefix           client id prefix
   -l, --lowmem       low mem mode, but use more CPU 
-  --ar               interval for client to disconnect and then reconnect
+  --ar               interval for client to disconnect and then reconnect.
+  --rseed            the seed of re-connect random sleep time, default 10. max(1, rseed) to sleep. minus value for max(1, -1 * rseed)) + (-1 * rseed).
 ```
 
 For example, create 50K concurrent connections at the arrival rate of 100/sec:
@@ -134,6 +135,7 @@ Usage: emqtt_bench pub [--help <help>] [-h [<host>]] [-p [<port>]]
   --prefix               client id prefix
   -l, --lowmem           low mem mode, but use more CPU 
   --ar                   x numbers,client to disconnect and automatic re-connect interval, base on x times of interval_of_msg, 0 - disable.
+  --rseed                the seed of re-connect random sleep time, default 10. max(1, rseed) to sleep. minus value for max(1, -1 * rseed)) + (-1 * rseed).
 ```
 
 For example, create 100 connections and each publishes messages at the rate of 100 msg/sec.
