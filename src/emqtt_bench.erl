@@ -72,7 +72,8 @@
           "One or multiple (comma-separated) source IP addresses"},
          {prefix, undefined, "prefix", string, "client id prefix"},
          {lowmem, $l, "lowmem", boolean, "enable low mem mode, but use more CPU"},
-         {ar, undefined, "ar", {integer, 0}, "disconnect and automatic re-connect interval, base on multiple times of interval_of_msg, 0 - disable."}
+         {ar, undefined, "ar", {integer, 0}, "disconnect and automatic re-connect interval, base on multiple times of interval_of_msg, 0 - disable."},
+         {rseed, undefined, "rseed", {integer, 10}, "the seed of re-connect random sleep time, default 10. max(1, rseed) to sleep. minus value for max(1, -1 * rseed)) + (-1 * rseed)"}
         ]).
 
 -define(SUB_OPTS,
@@ -158,6 +159,7 @@
 -define(IDX_SUB_FAIL, 4).
 -define(IDX_PUB, 5).
 -define(IDX_PUB_FAIL, 6).
+
 
 main(["sub"|Argv]) ->
     {ok, {Opts, _Args}} = getopt:parse(?SUB_OPTS, Argv),
@@ -481,7 +483,12 @@ reconnect(Parent, N, Client, PubSub, ReconnOpts, ServerTCPClosed) ->
         false -> emqtt:disconnect(Client); %% 主动断开，释放端口。
         true -> skip     %% 服务器已断开（在网络底层，客户端也被动断开了），则无需客户端再次操作断开（否则进程crash）。
     end,
-    timer:sleep(1000),
+    RSeed = proplists:get_value(rseed, ReconnOpts),
+    RandomSleepTime = case RSeed > 0 of
+                        true -> rand:uniform(RSeed) * 1000;
+                        false -> (rand:uniform(RSeed * -1) + RSeed * -1) * 1000
+                      end,
+    timer:sleep(RandomSleepTime),
     io:format("client(~w): automatic re-connecting...~n", [N]),
     ReconnFlag = proplists:get_value(reconn_flag, ReconnOpts),
     case ReconnFlag of
